@@ -112,7 +112,7 @@ def docling_setup_component(
         "model_config": model_config,
         "sampling_params": sampling_params,
         "document_intelligence": document_intelligence_config,
-        "vector_db_id": f"docling_vector_db_{uuid.uuid4()}"  # Unique identifier
+        "vector_db_id": f"docling_vector_db_genaiops"  # Hardcoded because of the Canopy Backend Queries
     }
     
     print(f"Document Intelligence Setup Complete:")
