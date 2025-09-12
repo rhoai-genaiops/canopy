@@ -97,6 +97,3 @@ def analyze_benchmark_results(output_path):
     else:
         print(f"❌ Results file not found: {results_file}")
         print("   Make sure the benchmark completed successfully.")
-
-# Example usage:
-# analyze_benchmark_results("canopy-benchmark-summarize-endpoint.yaml")
