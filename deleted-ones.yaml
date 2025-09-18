@@ -1,0 +1,78 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  annotations:
+    openshift.io/display-name: granite-guardian-2b-detector
+    serving.knative.openshift.io/enablePassthrough: 'true'
+    serving.kserve.io/deploymentMode: RawDeployment
+  name: granite-guardian-2b-detector
+  namespace: guardrails
+  finalizers:
+    - odh.inferenceservice.finalizers
+    - inferenceservice.finalizers
+  labels:
+    opendatahub.io/dashboard: 'true'
+spec:
+  predictor:
+    automountServiceAccountToken: false
+    maxReplicas: 1
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: guardrails-detector-vllm
+      name: ''
+      resources:
+        limits:
+          cpu: '2'
+          memory: 8Gi
+          nvidia.com/gpu: '1'
+        requests:
+          cpu: '2'
+          memory: 8Gi
+          nvidia.com/gpu: '1'
+      runtime: guardrails-detector-runtime-vllm
+      storage:
+        key: aws-connection-minio-data-connection-detector-models
+        path: granite-guardian-3.1-2b
+    tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        value: NVIDIA-L40-SHARED
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  annotations:
+    openshift.io/display-name: llama-guard-3-1b
+    serving.kserve.io/deploymentMode: RawDeployment
+  name: llama-guard-3-1b
+  namespace: llama-stack
+  finalizers:
+    - odh.inferenceservice.finalizers
+    - inferenceservice.finalizers
+  labels:
+    opendatahub.io/dashboard: 'true'
+spec:
+  predictor:
+    automountServiceAccountToken: false
+    maxReplicas: 1
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: vLLM
+      name: ''
+      resources:
+        limits:
+          cpu: '12'
+          memory: 64Gi
+          nvidia.com/gpu: '1'
+        requests:
+          cpu: '1'
+          memory: 1Gi
+          nvidia.com/gpu: '1'
+      runtime: llama-guard-3-1b
+      storageUri: 'oci://quay.io/rh-aiservices-bu/llama-guard-3-1b-modelcar:2.0.0'
+    tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        value: NVIDIA-L40-SHARED
