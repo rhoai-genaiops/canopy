@@ -842,49 +842,54 @@ if __name__ == '__main__':
         "temperature": 0.0,
         "max_tokens": 4096
     }
-    
-    # === Kubernetes Configuration ===
-    # Get namespace and configure Kubeflow connection
-    namespace_file_path = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
-    with open(namespace_file_path, 'r') as namespace_file:
-        namespace = namespace_file.read()
 
-    kubeflow_endpoint = f'https://ds-pipeline-dspa.{namespace}.svc:8443'
+    COMPILE = True
 
-    # Configure authentication
-    sa_token_file_path = '/var/run/secrets/kubernetes.io/serviceaccount/token'
-    with open(sa_token_file_path, 'r') as token_file:
-        bearer_token = token_file.read()
+    if COMPILE:
+        kfp.compiler.Compiler().compile(document_intelligence_rag_pipeline, 'document-intelligence-rag.yaml', pipeline_parameters=arguments)
+    else:        
+        # === Kubernetes Configuration ===
+        # Get namespace and configure Kubeflow connection
+        namespace_file_path = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+        with open(namespace_file_path, 'r') as namespace_file:
+            namespace = namespace_file.read()
 
-    ssl_ca_cert = '/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt'
+        kubeflow_endpoint = f'https://ds-pipeline-dspa.{namespace}.svc:8443'
 
-    print(f'Connecting to Data Science Pipelines: {kubeflow_endpoint}')
-    
-    # Create Kubeflow client and execute pipeline
-    client = kfp.Client(
-        host=kubeflow_endpoint,
-        existing_token=bearer_token,
-        ssl_ca_cert=ssl_ca_cert
-    )
+        # Configure authentication
+        sa_token_file_path = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+        with open(sa_token_file_path, 'r') as token_file:
+            bearer_token = token_file.read()
 
-    # Execute the document intelligence pipeline
-    client.create_run_from_pipeline_func(
-        document_intelligence_rag_pipeline,
-        arguments=arguments,
-        experiment_name="document-intelligence-rag",
-        enable_caching=False  # Disable caching for fresh document intelligence processing
-    )
-    
-    print("=" * 60)
-    print("📄 DOCUMENT INTELLIGENCE RAG PIPELINE SUBMITTED")
-    print("=" * 60)
-    print(f"🔗 Document URL: {arguments['document_url']}")
-    print(f"🧪 Experiment: document-intelligence-rag")
-    print(f"🤖 Model: all-MiniLM-L6-v2 (384D)")
-    print(f"⚙️  Chunk Size: {arguments['chunk_size_tokens']} tokens")
-    print(f"📊 Vector DB: {arguments['vector_provider']}")
-    print(f"🔬 Docling Service: Active")
-    print(f"❓ Test Queries: {len(arguments['test_queries'])}")
-    print("=" * 60)
-    print("Pipeline will execute 5 stages: Setup -> Processing -> Vector DB -> Ingestion -> Testing")
-    print("Monitor progress in the Kubeflow UI")
+        ssl_ca_cert = '/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt'
+
+        print(f'Connecting to Data Science Pipelines: {kubeflow_endpoint}')
+        
+        # Create Kubeflow client and execute pipeline
+        client = kfp.Client(
+            host=kubeflow_endpoint,
+            existing_token=bearer_token,
+            ssl_ca_cert=ssl_ca_cert
+        )
+
+        # Execute the document intelligence pipeline
+        client.create_run_from_pipeline_func(
+            document_intelligence_rag_pipeline,
+            arguments=arguments,
+            experiment_name="document-intelligence-rag",
+            enable_caching=False  # Disable caching for fresh document intelligence processing
+        )
+        
+        print("=" * 60)
+        print("📄 DOCUMENT INTELLIGENCE RAG PIPELINE SUBMITTED")
+        print("=" * 60)
+        print(f"🔗 Document URL: {arguments['document_url']}")
+        print(f"🧪 Experiment: document-intelligence-rag")
+        print(f"🤖 Model: all-MiniLM-L6-v2 (384D)")
+        print(f"⚙️  Chunk Size: {arguments['chunk_size_tokens']} tokens")
+        print(f"📊 Vector DB: {arguments['vector_provider']}")
+        print(f"🔬 Docling Service: Active")
+        print(f"❓ Test Queries: {len(arguments['test_queries'])}")
+        print("=" * 60)
+        print("Pipeline will execute 5 stages: Setup -> Processing -> Vector DB -> Ingestion -> Testing")
+        print("Monitor progress in the Kubeflow UI")
