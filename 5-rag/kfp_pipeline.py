@@ -325,6 +325,7 @@ def batch_docling_processing_component(
     os.makedirs(shared_volume_path, exist_ok=True)
 
     processed_files = []
+    processed_original_keys = []  # Track original keys only for successfully processed files
 
     # Process each document (original_keys passed through for metadata tracking)
     for idx, document_path in enumerate(downloaded_files, 1):
@@ -459,6 +460,8 @@ def batch_docling_processing_component(
 
             print(f"  [OK] Saved to: {content_file_path}")
             processed_files.append(content_file_path)
+            # Only add original key if processing succeeded
+            processed_original_keys.append(original_keys[idx - 1])
 
         except requests.exceptions.Timeout:
             print(f"  [FAILED] Timeout after {timeout} seconds")
@@ -483,11 +486,12 @@ def batch_docling_processing_component(
     print(f"  - Failed: {file_count - len(processed_files)}")
     print("=" * 60)
 
-    # Pass through original_keys for metadata tracking in ingestion
+    # Return only the keys for successfully processed files
+    # This ensures processed_files and processed_original_keys have matching indices
     BatchProcessingOutput = namedtuple("BatchProcessingOutput", ["processed_files", "original_keys", "processed_count"])
     return BatchProcessingOutput(
         processed_files=processed_files,
-        original_keys=original_keys,  # Pass through unchanged
+        original_keys=processed_original_keys,  # Only keys for successfully processed files
         processed_count=len(processed_files)
     )
 
@@ -822,6 +826,59 @@ def batch_document_ingestion_component(
     return BatchIngestionOutput(ingestion_results=ingestion_results)
 
 # =============================================================================
+# COMPONENT 6: PIPELINE COMPLETION
+# =============================================================================
+
+@component(
+    base_image='python:3.11'
+)
+def pipeline_completion_component(
+    test_ingestion_results: Dict[str, Any],
+    prod_ingestion_results: Dict[str, Any]
+) -> NamedTuple("CompletionOutput", [("completion_status", str)]):
+    """
+    Final convergence point for the pipeline.
+    Ensures the pipeline has a single terminal node for proper completion detection.
+
+    Args:
+        test_ingestion_results: Results from test environment ingestion
+        prod_ingestion_results: Results from prod environment ingestion
+
+    Returns:
+        NamedTuple with completion status
+    """
+    from collections import namedtuple
+
+    print("Pipeline Completion Check")
+    print("=" * 60)
+
+    test_status = test_ingestion_results.get("status", "unknown")
+    prod_status = prod_ingestion_results.get("status", "unknown")
+
+    print(f"Test Environment Ingestion: {test_status}")
+    print(f"  - Documents Ingested: {test_ingestion_results.get('documents_ingested', 0)}")
+    print(f"  - Vector DB IDs: {test_ingestion_results.get('vector_db_ids', [])}")
+
+    print(f"\nProd Environment Ingestion: {prod_status}")
+    print(f"  - Documents Ingested: {prod_ingestion_results.get('documents_ingested', 0)}")
+    print(f"  - Vector DB IDs: {prod_ingestion_results.get('vector_db_ids', [])}")
+
+    if test_status == "success" and prod_status == "success":
+        completion_status = "SUCCESS"
+        print(f"\n{completion_status}: Both test and prod ingestion completed successfully!")
+    elif test_status == "success" or prod_status == "success":
+        completion_status = "PARTIAL_SUCCESS"
+        print(f"\n{completion_status}: At least one environment succeeded")
+    else:
+        completion_status = "FAILED"
+        print(f"\n{completion_status}: Both environments failed")
+
+    print("=" * 60)
+
+    CompletionOutput = namedtuple("CompletionOutput", ["completion_status"])
+    return CompletionOutput(completion_status=completion_status)
+
+# =============================================================================
 # MAIN PIPELINE DEFINITION
 # =============================================================================
 
@@ -954,8 +1011,7 @@ def document_intelligence_rag_pipeline(
         original_keys=download_task.outputs["original_keys"],
         file_count=download_task.outputs["file_count"]
     )
-    processing_task.after(setup_task)
-    processing_task.after(download_task)
+    # Dependencies automatically handled by output references
     # Mount PVC for content transfer
     kubernetes.mount_pvc(
         processing_task,
@@ -967,13 +1023,13 @@ def document_intelligence_rag_pipeline(
     vector_db_task = vector_database_component(
         setup_config=setup_task.outputs["setup_config"]
     )
-    vector_db_task.after(setup_task)
+    # Dependencies automatically handled by output references
 
     # STAGE 4b: Vector Database Creation - Prod Environment
     vector_db_task_prod = vector_database_component(
         setup_config=setup_task_prod.outputs["setup_config"]
     )
-    vector_db_task_prod.after(setup_task_prod)
+    # Dependencies automatically handled by output references
 
     # STAGE 5: Batch Document Ingestion - Test Environment
     # Test environment ingests into BOTH databases if alias is provided
@@ -986,8 +1042,7 @@ def document_intelligence_rag_pipeline(
         vector_db_status=vector_db_task.outputs["vector_db_status"],
         vector_db_ids=vector_db_task.outputs["vector_db_ids"]
     )
-    ingestion_task.after(processing_task)
-    ingestion_task.after(vector_db_task)
+    # Dependencies automatically handled by output references
     # Mount same PVC for content access
     kubernetes.mount_pvc(
         ingestion_task,
@@ -1006,14 +1061,21 @@ def document_intelligence_rag_pipeline(
         vector_db_status=vector_db_task_prod.outputs["vector_db_status"],
         vector_db_ids=vector_db_task_prod.outputs["vector_db_ids"]
     )
-    ingestion_task_prod.after(processing_task)
-    ingestion_task_prod.after(vector_db_task_prod)
+    # Dependencies automatically handled by output references
     # Mount same PVC for content access
     kubernetes.mount_pvc(
         ingestion_task_prod,
         pvc_name=pvc_name,
         mount_path='/shared-data',
     )
+
+    # STAGE 6: Pipeline Completion
+    # Creates a single terminal node to ensure proper pipeline completion
+    completion_task = pipeline_completion_component(
+        test_ingestion_results=ingestion_task.outputs["ingestion_results"],
+        prod_ingestion_results=ingestion_task_prod.outputs["ingestion_results"]
+    )
+    # Dependencies automatically handled by output references
 
 # =============================================================================
 # PIPELINE EXECUTION
