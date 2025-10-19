@@ -43,11 +43,12 @@ def docling_setup_component(
     model_id: str,
     temperature: float,
     max_tokens: int,
+    vector_db_id: str,
     vector_db_alias: Optional[str] = None
 ) -> NamedTuple("SetupOutput", [("setup_config", Dict[str, Any])]):
     """
     Initialize the Document Intelligence RAG system with LlamaStack client and model configuration.
-    
+
     Args:
         embedding_model: Sentence transformer model for text embeddings
         embedding_dimension: Vector dimensions (must match the embedding model)
@@ -59,8 +60,9 @@ def docling_setup_component(
         model_id: Model identifier for text generation
         temperature: Sampling temperature (0.0 = deterministic)
         max_tokens: Maximum tokens for model responses
+        vector_db_id: Vector database identifier (used by Canopy backend for queries)
         vector_db_alias: Optional alias for the vector database (e.g., "latest")
-    
+
     Returns:
         NamedTuple containing setup configuration for downstream components
         NamedTuple usage: https://www.kubeflow.org/docs/components/pipelines/user-guides/data-handling/parameters/#multiple-output-parameters
@@ -113,7 +115,7 @@ def docling_setup_component(
         "model_config": model_config,
         "sampling_params": sampling_params,
         "document_intelligence": document_intelligence_config,
-        "vector_db_id": f"docling_vector_db_genaiops",  # Hardcoded because of the Canopy Backend Queries
+        "vector_db_id": vector_db_id,  # Configurable vector database identifier
         "vector_db_alias": vector_db_alias  # Optional alias (e.g., "latest")
     }
     
@@ -820,224 +822,6 @@ def batch_document_ingestion_component(
     return BatchIngestionOutput(ingestion_results=ingestion_results)
 
 # =============================================================================
-# COMPONENT 6: RAG TESTING AND QUERY EXECUTION
-# =============================================================================
-
-@component(
-    base_image='python:3.11',
-    packages_to_install=[
-        'llama_stack_client',
-        'fire',
-        'requests'
-    ]
-)
-def rag_testing_component_v2(
-    setup_config: Dict[str, Any],
-    ingestion_results: Dict[str, Any],
-    test_queries: List[str]
-) -> NamedTuple("TestingOutput", [("test_results", List[Dict[str, Any]])]):
-    """
-    Execute document intelligence queries to test and demonstrate RAG capabilities.
-    
-    Args:
-        setup_config: Configuration from docling_setup_component
-        ingestion_results: Results from document_ingestion_component
-        test_queries: List of queries to test document intelligence capabilities
-        
-    Returns:
-        NamedTuple containing comprehensive test results for each query
-    """
-    from llama_stack_client import LlamaStackClient
-    from collections import namedtuple
-    
-    print("Starting Document Intelligence RAG Testing")
-    print("=" * 60)
-    
-    # Verify prerequisites
-    if not ingestion_results.get("ready_for_queries", False):
-        error_msg = "System not ready for queries"
-        print(error_msg)
-        print(f"Ingestion Status: {ingestion_results}")
-        raise Exception(error_msg)
-    
-    # Extract configuration
-    base_url = setup_config["base_url"]
-    vector_db_id = setup_config["vector_db_id"]
-    model_config = setup_config["model_config"]
-    sampling_params = setup_config["sampling_params"]
-    
-    print(f"LlamaStack URL: {base_url}")
-    print(f"Vector Database ID: {vector_db_id}")
-    print(f"Model: {model_config['model_id']}")
-    print(f"Test Queries: {len(test_queries)} queries")
-    print(f"Testing document intelligence capabilities...")
-    
-    # Initialize LlamaStack client
-    client = LlamaStackClient(
-        base_url=base_url,
-        provider_data=None
-    )
-    
-    # Execute document intelligence queries
-    test_results = []
-    
-    for i, query in enumerate(test_queries, 1):
-        print(f"\nExecuting Query {i}/{len(test_queries)}")
-        print(f"Query: {query}")
-        print("-" * 50)
-        
-        try:
-            # STEP 1: RAG Retrieval
-            # Use semantic search to find relevant document intelligence chunks
-            print("Performing semantic retrieval...")
-            rag_response = client.tool_runtime.rag_tool.query(
-                content=query,                               # User's question
-                vector_db_ids=[vector_db_id],               # Document intelligence database
-                query_config={                              # Format retrieved results
-                    "chunk_template": "Result {index}\\nContent: {chunk.content}\\nMetadata: {metadata}\\n",
-                },
-            )
-            
-            print(f"Retrieved {len(rag_response.metadata.get('chunks', []))} relevant chunks")
-            
-            # STEP 2: Context Preparation
-            # Prepare enhanced prompt with document intelligence context
-            messages = [
-                {"role": "system", "content": "You are a helpful assistant specializing in document intelligence and academic content analysis."}
-            ]
-            
-            # Inject retrieved document intelligence as context
-            # Ensure context is JSON serializable
-            try:
-                prompt_context = str(rag_response.content)
-            except Exception:
-                prompt_context = "Content retrieval successful but conversion failed"
-            enhanced_prompt = f"""Please answer the given query using the document intelligence context below.
-
-CONTEXT (Processed with Docling Document Intelligence):
-{prompt_context}
-
-QUERY:
-{query}
-
-Note: The context includes intelligently processed content with preserved tables, formulas, figures, and document structure."""
-            
-            messages.append({"role": "user", "content": enhanced_prompt})
-            
-            # STEP 3: Enhanced Generation
-            # Generate response using document intelligence context
-            print("Generating response with document intelligence context...")
-            response = client.inference.chat_completion(
-                messages=messages,
-                model_id=model_config["model_id"],
-                sampling_params=sampling_params,
-                stream=False,  # Simplified for pipeline processing
-            )
-            
-            # Extract response content and ensure it's JSON serializable
-            # Force convert any complex objects to strings to avoid JSON serialization errors
-            print("DEBUG: Using updated serialization fix v2")
-            try:
-                if hasattr(response, 'completion_message') and hasattr(response.completion_message, 'content'):
-                    content = response.completion_message.content
-                    # Handle different content types
-                    if isinstance(content, str):
-                        generated_answer = content
-                    elif hasattr(content, 'text'):
-                        generated_answer = str(content.text)
-                    elif hasattr(content, '__iter__') and not isinstance(content, str):
-                        # Handle list of content items
-                        generated_answer = ' '.join(str(item.text if hasattr(item, 'text') else str(item)) for item in content)
-                    else:
-                        generated_answer = str(content)
-                else:
-                    generated_answer = str(response)
-            except Exception as e:
-                # Ultimate fallback - just convert everything to string
-                generated_answer = f"Response generated successfully (conversion error: {str(e)})"
-            
-            print(f"Generated response ({len(generated_answer)} characters)")
-            
-            # STEP 4: Result Analysis  
-            # Analyze the quality and capabilities demonstrated
-            # Ensure rag_metadata is JSON serializable - use simple fallback
-            try:
-                # Try to extract basic info safely
-                metadata_dict = dict(rag_response.metadata) if hasattr(rag_response.metadata, 'items') else {}
-                rag_metadata_serializable = {
-                    "chunks_count": len(metadata_dict.get('chunks', [])),
-                    "metadata_keys": list(metadata_dict.keys()) if metadata_dict else []
-                }
-            except Exception:
-                rag_metadata_serializable = {"chunks_count": 0, "error": "metadata_extraction_failed"}
-            
-            # Ensure ALL values are JSON serializable
-            result = {
-                "query_id": i,
-                "query": str(query),
-                "retrieved_chunks": len(rag_response.metadata.get('chunks', [])),
-                "generated_answer": str(generated_answer),
-                "rag_context": str(prompt_context),  # Force string conversion
-                "rag_metadata": rag_metadata_serializable,
-                "status": "success",
-                "demonstrates_capabilities": [
-                    "semantic_search",
-                    "document_intelligence",
-                    "context_aware_generation"
-                ]
-            }
-            
-            # Analyze specific document intelligence features demonstrated
-            if "table" in query.lower() or "data" in query.lower():
-                result["demonstrates_capabilities"].append("table_data_retrieval")
-            if "formula" in query.lower() or "equation" in query.lower():
-                result["demonstrates_capabilities"].append("mathematical_content")
-            if "figure" in query.lower() or "chart" in query.lower():
-                result["demonstrates_capabilities"].append("visual_content_understanding")
-            
-            test_results.append(result)
-            
-            print(f"Query {i} completed successfully")
-            print(f"Demonstrated capabilities: {', '.join(result['demonstrates_capabilities'])}")
-            
-        except Exception as e:
-            error_msg = f"Query {i} failed: {e}"
-            print(error_msg)
-            
-            # Record error result
-            error_result = {
-                "query_id": i,
-                "query": query,
-                "status": "error",
-                "error_message": str(e),
-                "generated_answer": None,
-                "demonstrates_capabilities": []
-            }
-            test_results.append(error_result)
-    
-    # Summary results
-    successful_queries = sum(1 for r in test_results if r["status"] == "success")
-    total_capabilities = set()
-    for result in test_results:
-        total_capabilities.update(result.get("demonstrates_capabilities", []))
-    
-    print(f"\nDocument Intelligence Testing Complete!")
-    print(f"Results Summary:")
-    print(f"  - Total Queries: {len(test_queries)}")
-    print(f"  - Successful: {successful_queries}")
-    print(f"  - Failed: {len(test_queries) - successful_queries}")
-    print(f"  - Capabilities Demonstrated: {len(total_capabilities)}")
-    print(f"  - Document Intelligence Features: Yes")
-    
-    if total_capabilities:
-        print(f"Demonstrated Capabilities:")
-        for capability in sorted(total_capabilities):
-            print(f"  - {capability.replace('_', ' ').title()}")
-    
-    TestingOutput = namedtuple("TestingOutput", ["test_results"])
-    return TestingOutput(test_results=test_results)
-
-# =============================================================================
 # MAIN PIPELINE DEFINITION
 # =============================================================================
 
@@ -1048,7 +832,6 @@ Note: The context includes intelligently processed content with preserved tables
 def document_intelligence_rag_pipeline(
     minio_secret_name: str,
     minio_bucket_name: str,
-    test_queries: List[str],
     embedding_model: str,
     embedding_dimension: int,
     chunk_size_tokens: int,
@@ -1060,6 +843,7 @@ def document_intelligence_rag_pipeline(
     model_id: str,
     temperature: float,
     max_tokens: int,
+    vector_db_id: str,
     test_vector_db_alias: Optional[str] = None
 ):
     """
@@ -1071,7 +855,6 @@ def document_intelligence_rag_pipeline(
     3. Batch Processing: Process all downloaded documents using Docling's advanced analysis
     4. Vector Database: Create and register vector databases (Test & Prod)
     5. Batch Ingestion: Ingest ALL processed documents with enhanced metadata (Test & Prod)
-    6. RAG Testing: Execute queries demonstrating document intelligence capabilities across all documents
 
     MinIO Batch Integration:
     - ALL documents in the bucket are automatically downloaded
@@ -1091,7 +874,6 @@ def document_intelligence_rag_pipeline(
         minio_secret_name: Name of Kubernetes secret containing MinIO credentials
                           Secret must have keys: AWS_S3_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
         minio_bucket_name: MinIO bucket name containing ALL documents to process
-        test_queries: List of queries to test document intelligence capabilities
         embedding_model: Sentence transformer model for text embeddings
         embedding_dimension: Vector dimensions (must match the embedding model)
         chunk_size_tokens: Optimal chunk size for academic content processing
@@ -1103,6 +885,7 @@ def document_intelligence_rag_pipeline(
         model_id: Model identifier for text generation
         temperature: Sampling temperature (0.0 = deterministic)
         max_tokens: Maximum tokens for model responses
+        vector_db_id: Vector database identifier (used by Canopy backend for queries)
         test_vector_db_alias: Optional alias for the test vector database (e.g., "latest")
 
     Returns:
@@ -1111,18 +894,6 @@ def document_intelligence_rag_pipeline(
     
     # Use existing PVC for content transfer
     pvc_name = "canopy-workspace-pvc"
-    
-    # Default test queries for document intelligence
-    if test_queries is None:
-        test_queries = [
-            "What is the PRFXception mentioned in the document?",
-            #"Can you provide the accuracy values of overall model prediction and residual cross-validation for five regions in southeast Tibet and four regions in northwest Yunnan?",
-            #"What tables are present in this document and what data do they contain?",
-            #"Are there any mathematical formulas or equations in the document? What do they represent?",
-            #"What is the structure and organization of this academic paper?"
-        ]
-    
-
 
     # STAGE 1: Document Intelligence Setup - Test Environment
     setup_task = docling_setup_component(
@@ -1136,6 +907,7 @@ def document_intelligence_rag_pipeline(
         model_id=model_id,
         temperature=temperature,
         max_tokens=max_tokens,
+        vector_db_id=vector_db_id,
         vector_db_alias=test_vector_db_alias
     )
 
@@ -1150,7 +922,8 @@ def document_intelligence_rag_pipeline(
         llama_stack_url=prod_llama_stack_url,
         model_id=model_id,
         temperature=temperature,
-        max_tokens=max_tokens
+        max_tokens=max_tokens,
+        vector_db_id=vector_db_id
     )
 
     # STAGE 2: Batch Download - Download ALL documents from MinIO bucket
@@ -1242,15 +1015,6 @@ def document_intelligence_rag_pipeline(
         mount_path='/shared-data',
     )
 
-    # STAGE 6: RAG Testing
-    testing_task = rag_testing_component_v2(
-        setup_config=setup_task.outputs["setup_config"],
-        ingestion_results=ingestion_task.outputs["ingestion_results"],
-        test_queries=test_queries
-    )
-    testing_task.after(ingestion_task)
-    
-
 # =============================================================================
 # PIPELINE EXECUTION
 # =============================================================================
@@ -1265,9 +1029,6 @@ if __name__ == '__main__':
     arguments = {
         "minio_secret_name": "documents",  # Name of Kubernetes secret with MinIO credentials
         "minio_bucket_name": "documents",  # MinIO bucket name - ALL files will be processed
-        "test_queries": [
-            "What is the PRFXception mentioned in the document?",
-        ],
         "embedding_model": "all-MiniLM-L6-v2",
         "embedding_dimension": 384,
         "chunk_size_tokens": 512,
@@ -1279,6 +1040,7 @@ if __name__ == '__main__':
         "model_id": "llama32",
         "temperature": 0.0,
         "max_tokens": 4096,
+        "vector_db_id": "docling_vector_db_genaiops",  # Vector database identifier for Canopy backend
         "test_vector_db_alias": "latest"  # Alias for test environment vector database
     }
 
@@ -1328,8 +1090,8 @@ if __name__ == '__main__':
         print(f"Model: all-MiniLM-L6-v2 (384D)")
         print(f"Chunk Size: {arguments['chunk_size_tokens']} tokens")
         print(f"Vector DB: {arguments['vector_provider']}")
+        print(f"Vector DB ID: {arguments['vector_db_id']}")
         print(f"Docling Service: Active")
-        print(f"Test Queries: {len(arguments['test_queries'])}")
         print("=" * 60)
         print("Pipeline Stages:")
         print("  1. Setup (Test & Prod)")
@@ -1337,6 +1099,5 @@ if __name__ == '__main__':
         print("  3. Batch Docling Processing (each file)")
         print("  4. Vector DB Creation (Test & Prod)")
         print("  5. Batch Ingestion (all documents)")
-        print("  6. RAG Testing")
         print("=" * 60)
         print("Monitor progress in the Kubeflow UI")
