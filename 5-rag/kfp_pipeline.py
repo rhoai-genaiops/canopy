@@ -1089,8 +1089,8 @@ if __name__ == '__main__':
     # === Pipeline Configuration ===
     # Configure the pipeline with document intelligence optimized parameters
     arguments = {
-        "minio_secret_name": "documents",  # Name of Kubernetes secret with MinIO credentials
-        "minio_bucket_name": "documents",  # MinIO bucket name - ALL files will be processed
+        "minio_secret_name": "documents", 
+        "minio_bucket_name": "documents",  
         "embedding_model": "all-MiniLM-L6-v2",
         "embedding_dimension": 384,
         "chunk_size_tokens": 512,
@@ -1106,7 +1106,7 @@ if __name__ == '__main__':
         "test_vector_db_alias": "latest"  # Alias for test environment vector database
     }
 
-    COMPILE = False
+    COMPILE = True
 
     if COMPILE:
         kfp.compiler.Compiler().compile(document_intelligence_rag_pipeline, 'document-intelligence-rag.yaml', pipeline_parameters=arguments)
