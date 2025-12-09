@@ -32,7 +32,7 @@ from langchain_openai import ChatOpenAI
 load_dotenv()
 
 # Default configuration
-DEFAULT_BASE_URL = os.getenv("VLLM_BASE_URL", "https://llama32-ai501.apps.cluster-hlm5w.hlm5w.sandbox2513.opentlc.com/v1")
+DEFAULT_BASE_URL = os.getenv("VLLM_BASE_URL", "http://llama-32-predictor.ai501.svc.cluster.local:8080/v1")
 DEFAULT_MODEL = os.getenv("VLLM_MODEL", "llama32")
 DEFAULT_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")  # vLLM doesn't require key by default
 

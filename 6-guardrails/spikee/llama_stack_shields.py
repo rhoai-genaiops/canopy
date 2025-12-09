@@ -103,19 +103,19 @@ def process_input(
             if DEFAULT_OUTPUT_SHIELDS:
                 agent_config["output_shields"] = DEFAULT_OUTPUT_SHIELDS
 
-            # Create agent (matching canopy backend lines 68-69)
-            agent_response = client.agents.create(agent_config=agent_config)
+            # Create agent using alpha API (llama-stack-client 0.3.0)
+            agent_response = client.alpha.agents.create(agent_config=agent_config)
             agent_id = agent_response.agent_id
 
-            # Create session (matching canopy backend lines 72-76)
-            session_response = client.agents.session.create(
+            # Create session using alpha API
+            session_response = client.alpha.agents.session.create(
                 agent_id=agent_id,
                 session_name="spikee_test_session"
             )
             session_id = session_response.session_id
 
-            # Send turn with streaming (matching canopy backend lines 79-84)
-            response = client.agents.turn.create(
+            # Send turn with streaming using alpha API
+            response = client.alpha.agents.turn.create(
                 agent_id=agent_id,
                 session_id=session_id,
                 messages=[{"role": "user", "content": input_text}],
@@ -156,16 +156,17 @@ def process_input(
             return not violation_detected
 
         else:
-            # Use inference API without shields (baseline)
+            # Use chat completions API without shields (baseline) - llama-stack-client 0.3.0
             messages = []
             if system_message:
                 messages.append({"role": "system", "content": system_message})
             messages.append({"role": "user", "content": input_text})
 
-            response = client.inference.chat_completion(
-                model_id=DEFAULT_MODEL,
+            response = client.chat.completions.create(
+                model=DEFAULT_MODEL,
                 messages=messages,
-                sampling_params={"max_tokens": 512, "temperature": 0.7},
+                max_tokens=512,
+                temperature=0.7,
                 stream=False,
             )
 
